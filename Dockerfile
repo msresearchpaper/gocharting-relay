@@ -1,6 +1,11 @@
-FROM denoland/deno:2.2.0
+FROM node:20-alpine
+
 WORKDIR /app
-COPY main.ts .
-RUN deno cache main.ts
+
+COPY package.json server.js ./
+
+RUN npm install --production
+
 EXPOSE 8000
-CMD ["run", "--allow-net", "--allow-env", "main.ts"]
+
+CMD ["npm", "start"]
