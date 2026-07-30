@@ -18,11 +18,19 @@ const server = http.createServer((req, res) => {
   res.end('Not Found');
 });
 
-const wss = new WebSocketServer({ noServer: true, path: '/ws/' });
+const wss = new WebSocketServer({ noServer: true });
 
 wss.on('connection', (client, req) => {
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   const parts = url.pathname.split('/').filter(Boolean);
+  
+  // Path format: /ws/{dc}/ws
+  if (parts.length < 3 || parts[0] !== 'ws') {
+    console.log(`Invalid path: ${url.pathname}`);
+    client.close(1008, 'Invalid path');
+    return;
+  }
+  
   const dc = parts[1] || 'blr1';
   const searchParams = url.search;
   
@@ -52,7 +60,7 @@ wss.on('connection', (client, req) => {
   });
   
   upstream.on('close', (code, reason) => {
-    console.log(`[${dc}] Upstream closed: code=${code}, reason=${reason.toString()}, wasClean=${upstream._closeStateReceived}`);
+    console.log(`[${dc}] Upstream closed: code=${code}`);
     if (client.readyState === WebSocket.OPEN) {
       client.close(code, reason);
     }
@@ -78,11 +86,14 @@ wss.on('connection', (client, req) => {
 
 server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  console.log(`Upgrade request: ${url.pathname}${url.search}`);
+  
   if (url.pathname.startsWith('/ws/')) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       wss.emit('connection', ws, req);
     });
   } else {
+    console.log(`Rejected path: ${url.pathname}`);
     socket.destroy();
   }
 });
