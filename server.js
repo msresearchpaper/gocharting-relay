@@ -8,6 +8,8 @@ const TARGET_ORIGIN = 'https://gocharting.com';
 const server = http.createServer((req, res) => {
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
   
+  console.log(`HTTP: ${req.method} ${url.pathname}`);
+  
   if (url.pathname === '/health') {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('OK');
@@ -20,23 +22,41 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({ noServer: true });
 
-wss.on('connection', (client, req) => {
+server.on('upgrade', (req, socket, head) => {
   const url = new URL(req.url || '/', `http://${req.headers.host}`);
-  const parts = url.pathname.split('/').filter(Boolean);
+  console.log(`Upgrade: ${url.pathname}${url.search}`);
+  console.log(`Headers: ${JSON.stringify(req.headers)}`);
   
-  // Path format: /ws/{dc}/ws
-  if (parts.length < 3 || parts[0] !== 'ws') {
-    console.log(`Invalid path: ${url.pathname}`);
-    client.close(1008, 'Invalid path');
+  if (!url.pathname.startsWith('/ws/')) {
+    console.log(`Rejected: invalid path`);
+    socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+    socket.destroy();
     return;
   }
   
+  const parts = url.pathname.split('/').filter(Boolean);
+  if (parts.length < 3 || parts[0] !== 'ws') {
+    console.log(`Rejected: invalid path format: ${parts.join('/')}`);
+    socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  
+  wss.handleUpgrade(req, socket, head, (ws) => {
+    wss.emit('connection', ws, req);
+  });
+});
+
+wss.on('connection', (client, req) => {
+  const url = new URL(req.url || '/', `http://${req.headers.host}`);
+  const parts = url.pathname.split('/').filter(Boolean);
   const dc = parts[1] || 'blr1';
   const searchParams = url.search;
   
-  console.log(`[${dc}] New connection, search: ${searchParams}`);
+  console.log(`[${dc}] Connection established`);
   
   const targetUrl = `${TARGET_WS_BASE}.${dc}.gocharting.com/${dc}/ws${searchParams}`;
+  console.log(`[${dc}] Connecting to: ${targetUrl}`);
   
   const upstream = new WebSocket(targetUrl, {
     headers: {
@@ -57,6 +77,7 @@ wss.on('connection', (client, req) => {
   
   upstream.on('error', (error) => {
     console.error(`[${dc}] Upstream error:`, error.message);
+    client.close(1011, 'Upstream error');
   });
   
   upstream.on('close', (code, reason) => {
@@ -84,21 +105,6 @@ wss.on('connection', (client, req) => {
   });
 });
 
-server.on('upgrade', (req, socket, head) => {
-  const url = new URL(req.url || '/', `http://${req.headers.host}`);
-  console.log(`Upgrade request: ${url.pathname}${url.search}`);
-  
-  if (url.pathname.startsWith('/ws/')) {
-    wss.handleUpgrade(req, socket, head, (ws) => {
-      wss.emit('connection', ws, req);
-    });
-  } else {
-    console.log(`Rejected path: ${url.pathname}`);
-    socket.destroy();
-  }
-});
-
 server.listen(PORT, () => {
-  console.log(`WebSocket Relay started on port ${PORT}`);
-  console.log(`Target: ${TARGET_WS_BASE}.*.gocharting.com`);
+  console.log(`Relay started on port ${PORT}`);
 });
